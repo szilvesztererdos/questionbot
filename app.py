@@ -9,7 +9,7 @@ BOT_ID = os.environ.get("BOT_ID")
 BOT_NAME = 'questionbot'
 START_COMMAND = 'start'
 NUMBERS = ('first', 'second', 'third')
-DAILY_START_HOURS = 15
+DAILY_START_HOURS = 8
 
 MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game which furthermore will '
                'help you maintain your programming knowledge, you can get to know your classmates '
