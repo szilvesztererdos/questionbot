@@ -411,8 +411,8 @@ def handle_answer(user_id, message):
 
 
 def main():
-    # 1 second delay between reading from firehose
-    READ_WEBSOCKET_DELAY = 1
+    # 0.1 second delay between reading from firehose
+    READ_WEBSOCKET_DELAY = 0.1
 
     daily_done = False
 
