@@ -233,7 +233,7 @@ def select_for_pairing():
                value['last_round'] != date.today()]
 
     # sort by rounds
-    players.sort(key=lambda p: p['rounds'], reverse=True)
+    players.sort(key=lambda p: p['rounds'], reverse=False)
 
     # search for a suitable pair
     for player in players:
