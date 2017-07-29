@@ -154,6 +154,7 @@ def handle_message_event(event):
         if is_admin(user_id):
             # send confirmation message for starting a game
             if storage['status'] == 'wait' and START_COMMAND in event['text'].lower():
+                storage['channel'] = {}
                 if '#' in event['text']:
                     mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
                     storage['channel'] = {}
