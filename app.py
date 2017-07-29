@@ -1,7 +1,7 @@
 import os
 import time
 import re
-from datetime import date
+from datetime import date, datetime
 from slackclient import SlackClient
 
 # constants
@@ -9,6 +9,8 @@ BOT_ID = os.environ.get("BOT_ID")
 BOT_NAME = 'questionbot'
 START_COMMAND = 'start'
 NUMBERS = ('first', 'second', 'third')
+DAILY_START_HOURS = 15
+
 MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game which furthermore will '
                'help you maintain your programming knowledge, you can get to know your classmates '
                'better and it\'s FUN :)\n'
@@ -47,7 +49,7 @@ MSG_ROUND_END = ('Okay, that\'s it. Thanks guys for the questions and the answer
                  '(if there are any players left and the game is still on).')
 MSG_ROUND_POINTS = 'Huh, it was great! You have {points} points at the end of the round.'
 
-
+# TODO: put on heroku
 # globals
 slack_client = SlackClient(os.environ.get('SLACK_BOT_TOKEN'))
 storage = {
@@ -116,6 +118,10 @@ def parse_slack_output(slack_rtm_output):
             log('API', output)
             if output and 'type' in output and output['type'] == 'message':
                 handle_message_event(output)
+
+
+def do_daily():
+    select_for_pairing()
 
 
 def handle_message_event(event):
@@ -207,7 +213,6 @@ def start_game(channel_id):
         send_im(player['id'], MSG_QUESTION.format(number=NUMBERS[len(player_st['questions'])]))
 
 
-# TODO: call daily select_for_pairing to handle further rounds
 def select_for_pairing():
     """
         Pairing rules:
@@ -408,10 +413,21 @@ def handle_answer(user_id, message):
 def main():
     # 1 second delay between reading from firehose
     READ_WEBSOCKET_DELAY = 1
+
+    daily_done = False
+
     if slack_client.rtm_connect():
         log('PROGRAM', 'QuestionBot connected and running!')
         while True:
             parse_slack_output(slack_client.rtm_read())
+
+            # handle daily jobs
+            if datetime.now().hour == DAILY_START_HOURS and not daily_done:
+                daily_done = True
+                do_daily()
+            elif datetime.now().hour == 0:
+                daily_done = False
+
             time.sleep(READ_WEBSOCKET_DELAY)
     else:
         log('PROGRAM', 'Connection failed. Invalid Slack token or bot ID?')
