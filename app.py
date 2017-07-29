@@ -38,6 +38,8 @@ MSG_ADMIN_CONFIRM_START_CANCEL = 'Game start cancelled.'
 MSG_ADMIN_STOPPING_GAME = 'Stopping game.'
 MSG_ADMIN_CONFIRM_STOP = 'Are you sure you want to end the game? (yes/no)'
 MSG_ADMIN_CONFIRM_STOP_CANCEL = 'Game stop cancelled.'
+MSG_NO_GAME_ONGOING = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
+                       'contact an admin!')
 MSG_USER_UNKNOWN_COMMAND = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
                             'contact an admin!')
 MSG_NOT_YOUR_TURN = 'It\'s not your turn now. Please, wait until your opponent finishes!'
@@ -199,17 +201,19 @@ def handle_message_event(event):
         # if player
         else:
             # setup
-            if user_id in storage['players'] and storage['players'][user_id]['status'] == 'setup':
+            if storage['players'][user_id]['status'] == 'setup':
                 handle_setup(user_id, event['text'])
             # play
-            elif user_id in storage['players'] and storage['players'][user_id]['status'] == 'play':
+            elif storage['players'][user_id]['status'] == 'play':
                 send_im(user_id, MSG_NOT_YOUR_TURN)
             # answer
-            elif user_id in storage['players'] and storage['players'][user_id]['status'] == 'answer':
+            elif storage['players'][user_id]['status'] == 'answer':
                 if event['channel'] == storage['players'][user_id]['play_channel']:
                     handle_answer(user_id, event['text'])
                 else:
                     send_im(user_id, MSG_SAY_IN_MPIM)
+            elif storage['players'][user_id]['status'] == 'idle':
+                send_im(user_id, MSG_NO_GAME_ONGOING)
             else:
                 send_im(user_id, MSG_USER_UNKNOWN_COMMAND)
     except KeyError as e:
@@ -249,7 +253,11 @@ def start_game(channel_id):
 # TODO: making recurring games
 def stop_game():
     global storage
+
+    # set game and player statuses
     storage['status'] = 'wait'
+    for player_id in storage['players'].keys():
+        storage['players'][player_id]['status'] = 'idle'
 
     # get top 3 players by points
     players = list(storage['players'].values())
