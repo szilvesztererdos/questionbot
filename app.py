@@ -29,7 +29,7 @@ MSG_ANSWER_REPEAT = ('Sorry, I didn\'t get that. Please, tell me again the answe
                      '(true/false)')
 MSG_SETUP_DONE = ('Okay, you\'re set up. Please wait until other players join the game, I will pair you up with them. '
                   'Stay tuned! ;)')
-MSG_ADMIN_UNKNOWN_COMMAND = 'Sorry, I didn\'t recognize any command. Use "start [#channel]" to start a round!'
+MSG_ADMIN_UNKNOWN_COMMAND = 'Sorry, I didn\'t recognize any command. Use "start [#channel]" to start a game!'
 MSG_ADMIN_STARTING_GAME_CHANNEL = 'Starting game in channel #{channel}.'
 MSG_ADMIN_STARTING_GAME_TEAM = 'Starting game for the whole team.'
 MSG_ADMIN_CONFIRM_START_TEAM = 'Are you sure you want to start a game for the whole team? (yes/no)'
