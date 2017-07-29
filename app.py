@@ -8,6 +8,7 @@ from slackclient import SlackClient
 BOT_ID = os.environ.get("BOT_ID")
 BOT_NAME = 'questionbot'
 START_COMMAND = 'start'
+STOP_COMMAND = 'stop'
 NUMBERS = ('first', 'second', 'third')
 DAILY_START_HOURS = 8
 
@@ -33,7 +34,10 @@ MSG_ADMIN_STARTING_GAME_CHANNEL = 'Starting game in channel #{channel}.'
 MSG_ADMIN_STARTING_GAME_TEAM = 'Starting game for the whole team.'
 MSG_ADMIN_CONFIRM_START_TEAM = 'Are you sure you want to start a game for the whole team? (yes/no)'
 MSG_ADMIN_CONFIRM_START_CHANNEL = 'Are you sure you want to start a game in the channel #{channel}? (yes/no)'
-MSG_ADMIN_CONFIRM_CANCEL = 'Game start cancelled.'
+MSG_ADMIN_CONFIRM_START_CANCEL = 'Game start cancelled.'
+MSG_ADMIN_STOPPING_GAME = 'Stopping game.'
+MSG_ADMIN_CONFIRM_STOP = 'Are you sure you want to end the game? (yes/no)'
+MSG_ADMIN_CONFIRM_STOP_CANCEL = 'Game stop cancelled.'
 MSG_USER_UNKNOWN_COMMAND = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
                             'contact an admin!')
 MSG_NOT_YOUR_TURN = 'It\'s not your turn now. Please, wait until your opponent finishes!'
@@ -48,8 +52,12 @@ MSG_ROUND_ANSWER_INCORRECT = '@{user_name}: Sorry, you\'re wrong. Maybe next tim
 MSG_ROUND_END = ('Okay, that\'s it. Thanks guys for the questions and the answers. We\'ll meet tomorrow '
                  '(if there are any players left and the game is still on).')
 MSG_ROUND_POINTS = 'Huh, it was great! You have {points} points at the end of the round.'
+MSG_END_GAME = ('Dear @channel! The question game has ended. Players with the top points are:\n'
+                '1. @{player_1}: {points_1} points\n'
+                '2. @{player_2}: {points_2} points\n'
+                '3. @{player_3}: {points_3} points\n')
 
-# TODO: put on heroku
+# TODO: switch to nosql (redis?)
 # globals
 slack_client = SlackClient(os.environ.get('SLACK_BOT_TOKEN'))
 storage = {
@@ -89,8 +97,12 @@ def send_im(user_id, message):
 def send_mpim(user_ids, message):
     api_call = slack_api('mpim.open', users=','.join(user_ids))
     channel_id = api_call.get('group').get('id')
-    slack_api('chat.postMessage', channel=channel_id, text=message, username=BOT_NAME, parse='full')
+    send_channel_message(channel_id, message)
     return channel_id
+
+
+def send_channel_message(channel_id, message):
+    slack_api('chat.postMessage', channel=channel_id, text=message, username=BOT_NAME, parse='full')
 
 
 def get_player_list(channel_id):
@@ -109,6 +121,15 @@ def get_player_list(channel_id):
            'name' in user and \
            user.get('name') != 'slackbot':
             yield user
+
+
+def get_channel_id_by_name(channel_name):
+    channels = slack_api('channels.list').get('channels')
+    for channel in channels:
+        if channel['name'] == channel_name:
+            return channel['id']
+
+    return None
 
 
 def parse_slack_output(slack_rtm_output):
@@ -131,7 +152,7 @@ def handle_message_event(event):
         user_id = event['user']
         # if admin
         if is_admin(user_id):
-            # send confirmation message
+            # send confirmation message for starting a game
             if storage['status'] == 'wait' and START_COMMAND in event['text'].lower():
                 if '#' in event['text']:
                     mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
@@ -140,26 +161,38 @@ def handle_message_event(event):
                     storage['channel']['name'] = mentioned_channels.group(2)
                     send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
                 else:
-                    storage['channel'] = None
+                    channel_id = get_channel_id_by_name('general')
+                    storage['channel']['id'] = channel_id
+                    storage['channel']['name'] = 'general'
                     send_im(user_id, MSG_ADMIN_CONFIRM_START_TEAM)
 
-                storage['status'] = 'confirm'
+                storage['status'] = 'confirm_start'
 
             # start game if confirmed
-            elif storage['status'] == 'confirm':
+            elif storage['status'] == 'confirm_start':
                 if 'yes' in event['text'].lower():
-                    if storage['channel'] is None:
+                    if storage['channel']['name'] == 'general':
                         send_im(user_id, MSG_ADMIN_STARTING_GAME_TEAM)
                     else:
                         send_im(user_id, MSG_ADMIN_STARTING_GAME_CHANNEL.format(channel=storage['channel']['name']))
                     start_game(storage['channel']['id'])
                 else:
-                    send_im(user_id, MSG_ADMIN_CONFIRM_CANCEL)
+                    send_im(user_id, MSG_ADMIN_CONFIRM_START_CANCEL)
                     storage['status'] = 'wait'
 
-            elif storage['status'] == 'game':
-                pass
+            # send confirmation message for stopping a game
+            elif storage['status'] == 'game' and STOP_COMMAND in event['text'].lower():
+                send_im(user_id, MSG_ADMIN_CONFIRM_STOP)
+                storage['status'] = 'confirm_stop'
 
+            # stop game if confirmed
+            elif storage['status'] == 'confirm_stop':
+                if 'yes' in event['text'].lower():
+                    send_im(user_id, MSG_ADMIN_STOPPING_GAME)
+                    stop_game()
+                else:
+                    send_im(user_id, MSG_ADMIN_CONFIRM_STOP_CANCEL)
+                    storage['status'] = 'game'
             else:
                 send_im(user_id, MSG_ADMIN_UNKNOWN_COMMAND)
         # if player
@@ -183,8 +216,6 @@ def handle_message_event(event):
 
 
 # TODO: handle players joining the channel after game start
-# TODO: handle ending game with admin command or passing deadline
-# TODO: making recurring games
 def start_game(channel_id):
     global storage
     storage['status'] = 'game'
@@ -211,6 +242,30 @@ def start_game(channel_id):
         send_im(player['id'], MSG_WELCOME)
         send_im(player['id'], MSG_SETUP)
         send_im(player['id'], MSG_QUESTION.format(number=NUMBERS[len(player_st['questions'])]))
+
+
+# TODO: handle ending game with passing deadline
+# TODO: making recurring games
+def stop_game():
+    global storage
+    storage['status'] = 'wait'
+
+    # get top 3 players by points
+    players = list(storage['players'].values())
+    players.sort(key=lambda p: p['points'], reverse=True)
+
+    # send leaderboard
+    send_channel_message(
+        storage['channel']['id'],
+        MSG_END_GAME.format(
+            player_1=players[0]['name'] if len(players) > 0 else '-',
+            points_1=players[0]['points'] if len(players) > 0 else '-',
+            player_2=players[1]['name'] if len(players) > 1 else '-',
+            points_2=players[1]['points'] if len(players) > 1 else '-',
+            player_3=players[2]['name'] if len(players) > 2 else '-',
+            points_3=players[2]['points'] if len(players) > 2 else '-'
+        )
+    )
 
 
 def select_for_pairing():
