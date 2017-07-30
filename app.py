@@ -169,6 +169,11 @@ def get_channel_id_by_name(channel_name):
         if channel['name'] == channel_name:
             return channel['id']
 
+    groups = slack_api('groups.list').get('groups')
+    for group in groups:
+        if group['name'] == channel_name:
+            return group['id']
+
     return None
 
 
@@ -198,8 +203,13 @@ def handle_message_event(event):
                 if START_COMMAND in event['text'].lower() and get_channel_type(event['channel']) == 'dm':
                     storage['channel'] = {}
                     if '#' in event['text']:
-                        mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
                         storage['channel'] = {}
+                        mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
+                        if mentioned_channels is None:
+                            mentioned_channels = re.search('#([a-zA-Z0-9_-]*)', event['text'])
+                            storage['channel']['name'] = mentioned_channels.group(1)
+                            storage['channel']['id'] = get_channel_id_by_name(storage['channel']['name'])
+                        else:
                         storage['channel']['id'] = mentioned_channels.group(1)
                         storage['channel']['name'] = mentioned_channels.group(2)
                         send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
