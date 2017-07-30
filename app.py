@@ -162,7 +162,6 @@ def get_player_list(channel_id):
             yield user
 
 
-# TODO: make it work for private channels (groups) as well
 def get_channel_id_by_name(channel_name):
     channels = slack_api('channels.list').get('channels')
     for channel in channels:
@@ -182,7 +181,12 @@ def parse_slack_output(slack_rtm_output):
     if output_list and len(output_list) > 0:
         for output in output_list:
             if output and 'type' in output and output['type'] == 'message':
-                log('API', output)
+                if all(key in output for key in ['text', 'channel', 'user', 'subtype']):
+                    log('API', {key: output[key] for key in ['text', 'channel', 'user', 'subtype']})
+                elif all(key in output for key in ['text', 'channel', 'user']):
+                    log('API', {key: output[key] for key in ['text', 'channel', 'user']})
+                else:
+                    log('API', {key: output[key] for key in ['text', 'channel']})
                 handle_message_event(output)
 
 
@@ -210,8 +214,8 @@ def handle_message_event(event):
                             storage['channel']['name'] = mentioned_channels.group(1)
                             storage['channel']['id'] = get_channel_id_by_name(storage['channel']['name'])
                         else:
-                        storage['channel']['id'] = mentioned_channels.group(1)
-                        storage['channel']['name'] = mentioned_channels.group(2)
+                            storage['channel']['id'] = mentioned_channels.group(1)
+                            storage['channel']['name'] = mentioned_channels.group(2)
                         send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
                     else:
                         channel_id = get_channel_id_by_name('general')
