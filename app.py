@@ -138,8 +138,8 @@ def parse_slack_output(slack_rtm_output):
     output_list = slack_rtm_output
     if output_list and len(output_list) > 0:
         for output in output_list:
-            log('API', output)
             if output and 'type' in output and output['type'] == 'message':
+                log('API', output)
                 handle_message_event(output)
 
 
