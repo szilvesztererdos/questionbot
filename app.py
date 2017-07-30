@@ -110,7 +110,17 @@ def send_channel_message(channel_id, message):
 def get_player_list(channel_id):
     users = slack_api("users.list").get('members')
     if channel_id is not None:
-        users_in_channel = slack_api("channels.info", channel=channel_id).get('channel').get('members')
+        channel = slack_client.api_call('channels.info', channel=channel_id)
+        group = slack_client.api_call('groups.info', channel=channel_id)
+        if channel.get('ok'):
+            users_in_channel = channel.get('channel').get('members')
+        elif group.get('ok'):
+            users_in_channel = group.get('group').get('members')
+        elif channel.get('error') == 'channel_not_found' and group.get('error') == 'channel_not_found':
+            raise ValueError('Channel is dm type.')
+        else:
+            raise ValueError('Connection error!', channel.get('error'), group.get('error'))
+
     for user in users:
         if 'id' in user and \
            (channel_id is None or user.get('id') in users_in_channel) and \
@@ -125,6 +135,7 @@ def get_player_list(channel_id):
             yield user
 
 
+# TODO: make it work for private channels (groups) as well
 def get_channel_id_by_name(channel_name):
     channels = slack_api('channels.list').get('channels')
     for channel in channels:
