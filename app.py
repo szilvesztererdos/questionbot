@@ -40,8 +40,6 @@ MSG_ADMIN_CONFIRM_STOP = 'Are you sure you want to end the game? (yes/no)'
 MSG_ADMIN_CONFIRM_STOP_CANCEL = 'Game stop cancelled.'
 MSG_NO_GAME_ONGOING = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
                        'contact an admin!')
-MSG_USER_UNKNOWN_COMMAND = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
-                            'contact an admin!')
 MSG_NOT_YOUR_TURN = 'It\'s not your turn now. Please, wait until your opponent finishes!'
 MSG_SAY_IN_MPIM = 'Please, asnwer the question in the group direct message with your opponent!'
 MSG_ROUND_START = ('Hey fellas! You are chosen to test each other\'s knowledge today. Each of you have to answer '
@@ -75,6 +73,34 @@ def slack_api(method, **kwargs):
         return api_call
     else:
         raise ValueError('Connection error!', api_call.get('error'), api_call.get('args'))
+
+
+def get_channel_type(channel_id):
+    '''
+        Determines the channel type based on channel id.
+
+            :param channel_id: the id of the channel
+            :type channel_id: str
+            :return: returns the type of the channel
+                pub: public channel (channel)
+                priv: private channel (group)
+                dm: direct message channel (im)
+                gdm: group dm message channel (mpim)
+            :rtype: str
+    '''
+    channel = slack_client.api_call('channels.info', channel_id)
+    group = slack_client.api_call('groups.info', channel_id)
+    if channel.get('ok'):
+        return 'pub'
+    elif group.get('ok'):
+        if group.get('group').get('is_mpim'):
+            return 'gdm'
+        else:
+            return 'priv'
+    elif channel.get('error') == 'channel_not_found' and group.get('error') == 'channel_not_found':
+        return 'dm'
+    else:
+        raise ValueError('Connection error!', channel.get('error'), group.get('error'))
 
 
 def log(scope, message):
@@ -165,57 +191,76 @@ def handle_message_event(event):
         user_id = event['user']
         # if admin
         if is_admin(user_id):
-            # send confirmation message for starting a game
-            if storage['status'] == 'wait' and START_COMMAND in event['text'].lower():
-                storage['channel'] = {}
-                if '#' in event['text']:
-                    mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
+            # if in wait status
+            if storage['status'] == 'wait':
+                # send confirmation message for starting a game
+                if START_COMMAND in event['text'].lower() and get_channel_type(event['channel']) == 'dm':
                     storage['channel'] = {}
-                    storage['channel']['id'] = mentioned_channels.group(1)
-                    storage['channel']['name'] = mentioned_channels.group(2)
-                    send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
-                else:
-                    channel_id = get_channel_id_by_name('general')
-                    storage['channel']['id'] = channel_id
-                    storage['channel']['name'] = 'general'
-                    send_im(user_id, MSG_ADMIN_CONFIRM_START_TEAM)
+                    if '#' in event['text']:
+                        mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
+                        storage['channel'] = {}
+                        storage['channel']['id'] = mentioned_channels.group(1)
+                        storage['channel']['name'] = mentioned_channels.group(2)
+                        send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
+                    else:
+                        channel_id = get_channel_id_by_name('general')
+                        storage['channel']['id'] = channel_id
+                        storage['channel']['name'] = 'general'
+                        send_im(user_id, MSG_ADMIN_CONFIRM_START_TEAM)
 
-                storage['status'] = 'confirm_start'
+                    storage['status'] = 'confirm_start'
+                else:
+                    # do nothing
+                    pass
 
             # start game if confirmed
             elif storage['status'] == 'confirm_start':
-                if 'yes' in event['text'].lower():
-                    if storage['channel']['name'] == 'general':
-                        send_im(user_id, MSG_ADMIN_STARTING_GAME_TEAM)
+                if get_channel_type(event['channel']) == 'dm':
+                    if 'yes' in event['text'].lower():
+                        if storage['channel']['name'] == 'general':
+                            send_im(user_id, MSG_ADMIN_STARTING_GAME_TEAM)
+                        else:
+                            send_im(user_id, MSG_ADMIN_STARTING_GAME_CHANNEL.format(channel=storage['channel']['name']))
+                        start_game(storage['channel']['id'])
                     else:
-                        send_im(user_id, MSG_ADMIN_STARTING_GAME_CHANNEL.format(channel=storage['channel']['name']))
-                    start_game(storage['channel']['id'])
+                        send_im(user_id, MSG_ADMIN_CONFIRM_START_CANCEL)
+                        storage['status'] = 'wait'
                 else:
-                    send_im(user_id, MSG_ADMIN_CONFIRM_START_CANCEL)
-                    storage['status'] = 'wait'
+                    # do nothing
+                    pass
 
             # send confirmation message for stopping a game
-            elif storage['status'] == 'game' and STOP_COMMAND in event['text'].lower():
-                send_im(user_id, MSG_ADMIN_CONFIRM_STOP)
-                storage['status'] = 'confirm_stop'
+            elif storage['status'] == 'game':
+                if STOP_COMMAND in event['text'].lower() and get_channel_type(event['channel']) == 'dm':
+                    send_im(user_id, MSG_ADMIN_CONFIRM_STOP)
+                    storage['status'] = 'confirm_stop'
+                else:
+                    # do nothing
+                    pass
 
             # stop game if confirmed
             elif storage['status'] == 'confirm_stop':
-                if 'yes' in event['text'].lower():
-                    send_im(user_id, MSG_ADMIN_STOPPING_GAME)
-                    stop_game()
+                if get_channel_type(event['channel']) == 'dm':
+                    if 'yes' in event['text'].lower():
+                        send_im(user_id, MSG_ADMIN_STOPPING_GAME)
+                        stop_game()
+                    else:
+                        send_im(user_id, MSG_ADMIN_CONFIRM_STOP_CANCEL)
+                        storage['status'] = 'game'
                 else:
-                    send_im(user_id, MSG_ADMIN_CONFIRM_STOP_CANCEL)
-                    storage['status'] = 'game'
+                    # do nothing
+                    pass
+
             else:
                 send_im(user_id, MSG_ADMIN_UNKNOWN_COMMAND)
+
         # if player
         else:
             # setup
-            if storage['players'][user_id]['status'] == 'setup':
+            if storage['players'][user_id]['status'] == 'setup' and get_channel_type(event['channel']) == 'dm':
                 handle_setup(user_id, event['text'])
             # play
-            elif storage['players'][user_id]['status'] == 'play':
+            elif storage['players'][user_id]['status'] == 'play' and get_channel_type(event['channel']) == 'gdm':
                 send_im(user_id, MSG_NOT_YOUR_TURN)
             # answer
             elif storage['players'][user_id]['status'] == 'answer':
@@ -223,10 +268,12 @@ def handle_message_event(event):
                     handle_answer(user_id, event['text'])
                 else:
                     send_im(user_id, MSG_SAY_IN_MPIM)
-            elif storage['players'][user_id]['status'] == 'idle':
+            elif storage['players'][user_id]['status'] == 'idle' and get_channel_type(event['channel']) == 'dm':
                 send_im(user_id, MSG_NO_GAME_ONGOING)
             else:
-                send_im(user_id, MSG_USER_UNKNOWN_COMMAND)
+                # do nothing
+                pass
+
     except KeyError as e:
         print(e)
 
