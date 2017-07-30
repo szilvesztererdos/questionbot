@@ -20,7 +20,8 @@ MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game whic
                'game. Each of you will make a guess and after the end of that round you will be paired '
                'with another classmate until there are no one left or the time is up.')
 MSG_SETUP = ('Please give me three statements and corresponding true/false answers in connection with this '
-             'week\'s material! You can type "cancel" anytime to opt-out of the game for that week.')
+             'week\'s material!')
+# You can type "cancel" anytime to opt-out of the game for that week.
 MSG_QUESTION = 'What\'s your {number} statement?'
 MSG_QUESTION_DONE = 'Thanks, I set up your {number} statement as "{question}".'
 MSG_ANSWER = 'What\'s the answer for the {number} statement? (true/false)'
