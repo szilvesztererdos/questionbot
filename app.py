@@ -89,8 +89,8 @@ def get_channel_type(channel_id):
                 gdm: group dm message channel (mpim)
             :rtype: str
     '''
-    channel = slack_client.api_call('channels.info', channel_id)
-    group = slack_client.api_call('groups.info', channel_id)
+    channel = slack_client.api_call('channels.info', channel=channel_id)
+    group = slack_client.api_call('groups.info', channel=channel_id)
     if channel.get('ok'):
         return 'pub'
     elif group.get('ok'):
