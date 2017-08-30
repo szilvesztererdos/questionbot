@@ -2,6 +2,7 @@ import os
 import time
 import re
 import pymongo
+from urllib.parse import urlparse
 from datetime import date, datetime
 from slackclient import SlackClient
 
@@ -12,7 +13,6 @@ START_COMMAND = 'start'
 STOP_COMMAND = 'stop'
 NUMBERS = ('first', 'second', 'third')
 DAILY_START_HOURS = 8
-DB_NAME = 'questionbot'
 
 MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game which furthermore will '
                'help you maintain your programming knowledge, you can get to know your classmates '
@@ -653,14 +653,14 @@ def main():
 
 # globals
 slack_client = SlackClient(os.environ.get('SLACK_BOT_TOKEN'))
+mongodb_uri = os.environ.get('MONGODB_URI')
 try:
-    uri = os.environ.get('MONGODB_URI')
-    conn = pymongo.MongoClient(uri)
+    conn = pymongo.MongoClient(mongodb_uri)
     log('DB', 'Connection successful.')
 except pymongo.errors.ConnectionFailure as e:
     log('DB', 'Could not connect to MongoDB: %s' % e)
 
-db = conn[DB_NAME]
+db = conn[urlparse(mongodb_uri).path[1:]]
 
 
 if __name__ == "__main__":
