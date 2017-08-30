@@ -1,6 +1,7 @@
 import os
 import time
 import re
+import pymongo
 from datetime import date, datetime
 from slackclient import SlackClient
 
@@ -11,6 +12,7 @@ START_COMMAND = 'start'
 STOP_COMMAND = 'stop'
 NUMBERS = ('first', 'second', 'third')
 DAILY_START_HOURS = 8
+DB_NAME = 'questionbot'
 
 MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game which furthermore will '
                'help you maintain your programming knowledge, you can get to know your classmates '
@@ -42,7 +44,7 @@ MSG_ADMIN_CONFIRM_STOP_CANCEL = 'Game stop cancelled.'
 MSG_NO_GAME_ONGOING = ('Currently there isn\'t any game ongoing. Please wait for the next round or '
                        'contact an admin!')
 MSG_NOT_YOUR_TURN = 'It\'s not your turn now. Please, wait until your opponent finishes!'
-MSG_SAY_IN_MPIM = 'Please, asnwer the question in the group direct message with your opponent!'
+MSG_SAY_IN_MPIM = 'Please, answer the question in the group direct message with your opponent!'
 MSG_ROUND_START = ('Hey fellas! You are chosen to test each other\'s knowledge today. Each of you have to answer '
                    'the other\'s questions and each correct answer counts as one point.')
 MSG_ROUND_NEXT_USER = '@{user_name}: It\'s your turn, please answer the following questions.'
@@ -57,15 +59,6 @@ MSG_END_GAME = ('Dear @channel! The question game has ended. Players with the to
                 '1. @{player_1}: {points_1} points\n'
                 '2. @{player_2}: {points_2} points\n'
                 '3. @{player_3}: {points_3} points\n')
-
-# TODO: switch to nosql (redis?)
-# globals
-slack_client = SlackClient(os.environ.get('SLACK_BOT_TOKEN'))
-storage = {
-    'status': 'wait',
-    'players': {},
-    'channel': None
-}
 
 
 def slack_api(method, **kwargs):
@@ -181,6 +174,7 @@ def parse_slack_output(slack_rtm_output):
     if output_list and len(output_list) > 0:
         for output in output_list:
             if output and 'type' in output and output['type'] == 'message':
+                # TODO: include user name and channel name as well to be more readable
                 if all(key in output for key in ['text', 'channel', 'user', 'subtype']):
                     log('API', {key: output[key] for key in ['text', 'channel', 'user', 'subtype']})
                 elif all(key in output for key in ['text', 'channel', 'user']):
@@ -191,77 +185,127 @@ def parse_slack_output(slack_rtm_output):
 
 
 def do_daily():
-    select_for_pairing()
+    status = db['settings'].find_one({'name': 'status'})
+    if status is not None and status['value'] == 'game':
+        select_for_pairing()
 
 
 def handle_message_event(event):
-    global storage
 
     try:
         user_id = event['user']
         # if admin
         if is_admin(user_id):
             # if in wait status
-            if storage['status'] == 'wait':
+            if db['settings'].find_one({'name': 'status'})['value'] == 'wait':
                 # send confirmation message for starting a game
                 if START_COMMAND in event['text'].lower() and get_channel_type(event['channel']) == 'dm':
-                    storage['channel'] = {}
                     if '#' in event['text']:
-                        storage['channel'] = {}
                         mentioned_channels = re.search('<#(\w*)\|([a-zA-Z0-9_-]*)\>', event['text'])
                         if mentioned_channels is None:
                             mentioned_channels = re.search('#([a-zA-Z0-9_-]*)', event['text'])
-                            storage['channel']['name'] = mentioned_channels.group(1)
-                            storage['channel']['id'] = get_channel_id_by_name(storage['channel']['name'])
+                            db['settings'].update_one(
+                                {'name': 'channel_name'},
+                                {'$set': {'value': mentioned_channels.group(1)}}, upsert=True
+                            )
+                            db['settings'].update_one(
+                                {'name': 'channel_id'},
+                                {
+                                    '$set': {
+                                        'value':
+                                            get_channel_id_by_name(
+                                                db['settings'].find_one({'name': 'channel_name'})['value']
+                                            )
+                                    }
+                                },
+                                upsert=True
+                            )
                         else:
-                            storage['channel']['id'] = mentioned_channels.group(1)
-                            storage['channel']['name'] = mentioned_channels.group(2)
-                        send_im(user_id, MSG_ADMIN_CONFIRM_START_CHANNEL.format(channel=storage['channel']['name']))
+                            db['settings'].update_one(
+                                {'name': 'channel_id'},
+                                {'$set': {'value': mentioned_channels.group(1)}},
+                                upsert=True
+                            )
+                            db['settings'].update_one(
+                                {'name': 'channel_name'},
+                                {'$set': {'value': mentioned_channels.group(2)}},
+                                upsert=True
+                            )
+                        send_im(
+                            user_id,
+                            MSG_ADMIN_CONFIRM_START_CHANNEL.format(
+                                channel=db['settings'].find_one({'name': 'channel_name'})['value']
+                            )
+                        )
+
                     else:
                         channel_id = get_channel_id_by_name('general')
-                        storage['channel']['id'] = channel_id
-                        storage['channel']['name'] = 'general'
+                        db['settings'].update_one(
+                            {'name': 'channel_id'},
+                            {'$set': {'value': channel_id}}, upsert=True
+                        )
+                        db['settings'].update_one(
+                            {'name': 'channel_name'},
+                            {'$set': {'value': 'general'}}, upsert=True
+                        )
                         send_im(user_id, MSG_ADMIN_CONFIRM_START_TEAM)
 
-                    storage['status'] = 'confirm_start'
+                    db['settings'].update_one(
+                        {'name': 'status'},
+                        {'$set': {'value': 'confirm_start'}}, upsert=True
+                    )
                 else:
                     # do nothing
                     pass
 
             # start game if confirmed
-            elif storage['status'] == 'confirm_start':
+            elif db['settings'].find_one({'name': 'status'})['value'] == 'confirm_start':
                 if get_channel_type(event['channel']) == 'dm':
                     if 'yes' in event['text'].lower():
-                        if storage['channel']['name'] == 'general':
+                        if db['settings'].find_one({'name': 'channel_name'})['value'] == 'general':
                             send_im(user_id, MSG_ADMIN_STARTING_GAME_TEAM)
                         else:
-                            send_im(user_id, MSG_ADMIN_STARTING_GAME_CHANNEL.format(channel=storage['channel']['name']))
-                        start_game(storage['channel']['id'])
+                            send_im(
+                                user_id,
+                                MSG_ADMIN_STARTING_GAME_CHANNEL.format(
+                                    channel=db['settings'].find_one({'name': 'channel_name'})['value']
+                                )
+                            )
+                        start_game(db['settings'].find_one({'name': 'channel_id'})['value'])
                     else:
                         send_im(user_id, MSG_ADMIN_CONFIRM_START_CANCEL)
-                        storage['status'] = 'wait'
+                        db['settings'].update_one(
+                            {'name': 'status'},
+                            {'$set': {'value': 'wait'}}, upsert=True
+                        )
                 else:
                     # do nothing
                     pass
 
             # send confirmation message for stopping a game
-            elif storage['status'] == 'game':
+            elif db['settings'].find_one({'name': 'status'})['value'] == 'game':
                 if STOP_COMMAND in event['text'].lower() and get_channel_type(event['channel']) == 'dm':
                     send_im(user_id, MSG_ADMIN_CONFIRM_STOP)
-                    storage['status'] = 'confirm_stop'
+                    db['settings'].update_one(
+                        {'name': 'status'},
+                        {'$set': {'value': 'confirm_stop'}}, upsert=True
+                    )
                 else:
                     # do nothing
                     pass
 
             # stop game if confirmed
-            elif storage['status'] == 'confirm_stop':
+            elif db['settings'].find_one({'name': 'status'})['value'] == 'confirm_stop':
                 if get_channel_type(event['channel']) == 'dm':
                     if 'yes' in event['text'].lower():
                         send_im(user_id, MSG_ADMIN_STOPPING_GAME)
                         stop_game()
                     else:
                         send_im(user_id, MSG_ADMIN_CONFIRM_STOP_CANCEL)
-                        storage['status'] = 'game'
+                        db['settings'].update_one(
+                            {'name': 'status'},
+                            {'$set': {'value': 'game'}}, upsert=True
+                        )
                 else:
                     # do nothing
                     pass
@@ -272,18 +316,21 @@ def handle_message_event(event):
         # if player
         else:
             # setup
-            if storage['players'][user_id]['status'] == 'setup' and get_channel_type(event['channel']) == 'dm':
+            if db['players'].find_one({'id': user_id})['status'] == 'setup' and \
+                    get_channel_type(event['channel']) == 'dm':
                 handle_setup(user_id, event['text'])
             # play
-            elif storage['players'][user_id]['status'] == 'play' and get_channel_type(event['channel']) == 'gdm':
+            elif db['players'].find_one({'id': user_id})['status'] == 'play' and \
+                    get_channel_type(event['channel']) == 'gdm':
                 send_im(user_id, MSG_NOT_YOUR_TURN)
             # answer
-            elif storage['players'][user_id]['status'] == 'answer':
-                if event['channel'] == storage['players'][user_id]['play_channel']:
+            elif db['players'].find_one({'id': user_id})['status'] == 'answer':
+                if event['channel'] == db['players'].find_one({'id': user_id})['play_channel']:
                     handle_answer(user_id, event['text'])
                 else:
                     send_im(user_id, MSG_SAY_IN_MPIM)
-            elif storage['players'][user_id]['status'] == 'idle' and get_channel_type(event['channel']) == 'dm':
+            elif db['players'].find_one({'id': user_id})['status'] == 'idle' and \
+                    get_channel_type(event['channel']) == 'dm':
                 send_im(user_id, MSG_NO_GAME_ONGOING)
             else:
                 # do nothing
@@ -293,29 +340,38 @@ def handle_message_event(event):
         print(e)
 
 
+# TODO: send a message to the game channel about game start (and end)
 # TODO: handle players joining the channel after game start
 def start_game(channel_id):
-    global storage
-    storage['status'] = 'game'
+    db['settings'].update_one(
+        {'name': 'status'},
+        {'$set': {'value': 'game'}}, upsert=True
+    )
     players = get_player_list(channel_id)
     for player in players:
         # save player status
         # we need player id in key and in value as well
-        storage['players'][player['id']] = {
-            'id': player['id'],
-            'name': player['name'],
-            'status': 'setup',
-            'current_question_num': 0,
-            'questions': [],
-            'answers': [],
-            'rounds': 0,
-            'last_round': None,
-            'opponents': [],
-            'play_channel': None,
-            'points': 0
-        }
+        db['players'].update_one(
+            {'id': player['id']},
+            {
+                '$set': {
+                    'id': player['id'],
+                    'name': player['name'],
+                    'status': 'setup',
+                    'current_question_num': 0,
+                    'questions': [],
+                    'answers': [],
+                    'rounds': 0,
+                    'last_round': None,
+                    'opponents': [],
+                    'play_channel': None,
+                    'points': 0
+                }
+            },
+            upsert=True
+        )
 
-        player_st = storage['players'][player['id']]
+        player_st = db['players'].find_one({'id': player['id']})
         # send initial messages to player
         send_im(player['id'], MSG_WELCOME)
         send_im(player['id'], MSG_SETUP)
@@ -325,20 +381,19 @@ def start_game(channel_id):
 # TODO: handle ending game with passing deadline
 # TODO: making recurring games
 def stop_game():
-    global storage
 
     # set game and player statuses
-    storage['status'] = 'wait'
-    for player_id in storage['players'].keys():
-        storage['players'][player_id]['status'] = 'idle'
+    db['settings'].update_one({'name': 'status'}, {'$set': {'value': 'wait'}}, upsert=True)
+    for player in db['players'].find():
+        db['players'].update_one({'id': player['id']}, {'$set': {'status': 'idle'}}, upsert=True)
 
     # get top 3 players by points
-    players = list(storage['players'].values())
+    players = list(db['players'].find())
     players.sort(key=lambda p: p['points'], reverse=True)
 
     # send leaderboard
     send_channel_message(
-        storage['channel']['id'],
+        db['settings'].find_one({'name': 'channel_id'})['value'],
         MSG_END_GAME.format(
             player_1=players[0]['name'] if len(players) > 0 else '-',
             points_1=players[0]['points'] if len(players) > 0 else '-',
@@ -360,12 +415,11 @@ def select_for_pairing():
         - nobody can play with the same pair twice in a game
         - nobody can play with themselves
     """
-    global storage
 
     # filter for status and last_round
     players = [value
                for value
-               in storage['players'].values()
+               in list(db['players'].find())
                if value['status'] == 'ready' and
                value['last_round'] != date.today()]
 
@@ -383,43 +437,59 @@ def select_for_pairing():
             candidate['opponents'].append(player['id'])
             player['opponents'].append(candidate['id'])
 
-            # update storage with players already paired
-            storage['players'][player['id']]['opponents'].append(candidate['id'])
-            storage['players'][candidate['id']]['opponents'].append(player['id'])
+            # update db with players already paired
+            db['players'].update_one(
+                {'id': player['id']},
+                {
+                    '$push': {
+                        'opponents': candidate['id']
+                    }
+                }
+            )
+            db['players'].update_one(
+                {'id': candidate['id']},
+                {
+                    '$push': {
+                        'opponents': player['id']
+                    }
+                }
+            )
 
             pair_players(player['id'], candidate['id'])
 
 
 def pair_players(user_id_1, user_id_2):
-    global storage
     log('PROGRAM', '{} and {} are going to be paired.'.format(user_id_1, user_id_2))
 
     # change users' state to play from ready
-    storage['players'][user_id_1]['status'] = 'play'
-    storage['players'][user_id_2]['status'] = 'play'
+    db['players'].update_many(
+        {'id': {'$in': [user_id_1, user_id_2]}},
+        {'$set': {'status': 'play'}}
+    )
 
     # send group im to the opponents
     channel_id = send_mpim([user_id_1, user_id_2], MSG_ROUND_START)
 
     # save play channel for future checking
-    storage['players'][user_id_1]['play_channel'] = channel_id
-    storage['players'][user_id_2]['play_channel'] = channel_id
+    db['players'].update_many(
+        {'id': {'$in': [user_id_1, user_id_2]}},
+        {'$set': {'play_channel': channel_id}}
+    )
 
     ask_question_from_players(user_id_1, user_id_2)
 
 
 def ask_question_from_players(user_id_1, user_id_2):
-    global storage
     player_id = None
     opponent_id = None
 
     # determine who's playing
-    if (storage['players'][user_id_1]['status'] == 'play' or
-       storage['players'][user_id_1]['status'] == 'answer'):
+    if (db['players'].find_one({'id': user_id_1})['status'] == 'play' or
+       db['players'].find_one({'id': user_id_1})['status'] == 'answer'):
         player_id = user_id_1
         opponent_id = user_id_2
-    elif (storage['players'][user_id_2]['status'] == 'play' or
-          storage['players'][user_id_1]['status'] == 'answer'):
+    elif (db['players'].find_one({'id': user_id_2})['status'] == 'play' or
+          db['players'].find_one({'id': user_id_1})['status'] == 'answer'):
         player_id = user_id_2
         opponent_id = user_id_1
     else:
@@ -427,38 +497,37 @@ def ask_question_from_players(user_id_1, user_id_2):
         pass
 
     # if there wasn't any question asked from this player in this round
-    if (storage['players'][player_id]['current_question_num'] == 0):
+    if (db['players'].find_one({'id': player_id})['current_question_num'] == 0):
         send_mpim(
             [player_id, opponent_id],
-            MSG_ROUND_NEXT_USER.format(user_name=storage['players'][player_id]['name'])
+            MSG_ROUND_NEXT_USER.format(user_name=db['players'].find_one({'id': player_id})['name'])
         )
-        storage['players'][player_id]['current_question_num'] = 1
+
+        db['players'].update_one({'id': player_id}, {'$set': {'current_question_num': 1}})
 
     # set up shortcuts
-    player_st = storage['players'][player_id]
-    current_question_num = player_st['current_question_num']
-    question = storage['players'][opponent_id]['questions'][current_question_num - 1]
+    current_question_num = db['players'].find_one({'id': player_id})['current_question_num']
+    question = db['players'].find_one({'id': opponent_id})['questions'][current_question_num - 1]
 
     # ask the question
     send_mpim(
         [player_id, opponent_id],
         MSG_ROUND_QUESTION.format(
-            user_name=player_st['name'],
+            user_name=db['players'].find_one({'id': player_id})['name'],
             number=NUMBERS[current_question_num - 1],
             question=question
         )
     )
 
     # set status so we are waiting for this player's answer
-    player_st['status'] = 'answer'
+    db['players'].update_one({'id': player_id}, {'$set': {'status': 'answer'}})
 
 
 # TODO: cancel
 # TODO: redoable setup
 # TODO: profile picture
 def handle_setup(user_id, message):
-    global storage
-    player_st = storage['players'][user_id]
+    player_st = db['players'].find_one({'id': user_id})
     # question
     if len(player_st['questions']) == len(player_st['answers']):
         send_im(
@@ -468,7 +537,7 @@ def handle_setup(user_id, message):
                 question=message
             )
         )
-        player_st['questions'].append(message)
+        db['players'].update_one({'id': user_id}, {'$push': {'questions': message}})
         send_im(user_id, MSG_ANSWER.format(number=NUMBERS[len(player_st['answers'])]))
     # answer
     else:
@@ -488,21 +557,20 @@ def handle_setup(user_id, message):
                     answer=answer
                 )
             )
-            player_st['answers'].append(answer)
+            db['players'].update_one({'id': user_id}, {'$push': {'answers': answer}})
 
             # if we're done with the setup
             if len(player_st['questions']) == 3:
                 send_im(user_id, MSG_SETUP_DONE)
-                player_st['status'] = 'ready'
+                db['players'].update_one({'id': user_id}, {'$set': {'status': 'ready'}})
                 select_for_pairing()
             else:
                 send_im(user_id, MSG_QUESTION.format(number=NUMBERS[len(player_st['questions'])]))
 
 
 def handle_answer(user_id, message):
-    global storage
-    player_st = storage['players'][user_id]
-    opponent_st = storage['players'][player_st['opponents'][-1]]
+    player_st = db['players'].find_one({'id': user_id})
+    opponent_st = db['players'].find_one({'id': player_st['opponents'][-1]})
     current_question_num = player_st['current_question_num']
 
     answer = None
@@ -517,27 +585,37 @@ def handle_answer(user_id, message):
         # handle correctness
         if answer == opponent_st['answers'][current_question_num - 1]:
             send_mpim([user_id, opponent_st['id']], MSG_ROUND_ANSWER_CORRECT.format(user_name=player_st['name']))
-            player_st['points'] += 1
+            db['players'].update_one({'id': user_id}, {'$inc': {'points': 1}})
         else:
             send_mpim([user_id, opponent_st['id']], MSG_ROUND_ANSWER_INCORRECT.format(user_name=player_st['name']))
 
         # update current question number (or state if we're done)
         if current_question_num == 3:
-            player_st['current_question_num'] = 0
+            db['players'].update_one({'id': user_id}, {'$set': {'current_question_num': 0}})
             # TODO: could be something else as now we're sending the no game ongoing message to the first user
             #  while the second user still answering the questions
-            player_st['status'] = 'ready'
+            db['players'].update_one({'id': user_id}, {'$set': {'status': 'ready'}})
         else:
-            player_st['current_question_num'] += 1
+            db['players'].update_one({'id': user_id}, {'$inc': {'current_question_num': 1}})
+
+        # reset shortcuts, because it could changed
+        player_st = db['players'].find_one({'id': user_id})
+        opponent_st = db['players'].find_one({'id': player_st['opponents'][-1]})
 
         if player_st['status'] == 'ready' and opponent_st['status'] == 'ready':
             # end of round
-            player_st['last_round'] = date.today()
-            opponent_st['last_round'] = date.today()
-            player_st['rounds'] += 1
-            opponent_st['rounds'] += 1
-            player_st['play_channel'] = None
-            opponent_st['play_channel'] = None
+            db['players'].update_many(
+                {'id': {'$in': [user_id, opponent_st['id']]}},
+                {
+                    '$set': {
+                        'last_round': datetime.today(),
+                        'play_channel': None
+                    },
+                    '$inc': {
+                        'rounds': 1
+                    }
+                }
+            )
 
             send_mpim([player_st['id'], opponent_st['id']], MSG_ROUND_END)
             send_im(player_st['id'], MSG_ROUND_POINTS.format(points=player_st['points']))
@@ -552,6 +630,8 @@ def main():
     READ_WEBSOCKET_DELAY = 0.1
 
     daily_done = False
+    if db['settings'].find_one({'name': 'status'}) is None:
+        db['settings'].update_one({'name': 'status'}, {'$set': {'value': 'wait'}}, upsert=True)
 
     if slack_client.rtm_connect():
         log('PROGRAM', 'QuestionBot connected and running!')
@@ -561,6 +641,7 @@ def main():
             # handle daily jobs
             if datetime.now().hour == DAILY_START_HOURS and not daily_done:
                 daily_done = True
+                log('PROGRAM', 'Running daily script.')
                 do_daily()
             elif datetime.now().hour == 0:
                 daily_done = False
@@ -568,6 +649,19 @@ def main():
             time.sleep(READ_WEBSOCKET_DELAY)
     else:
         log('PROGRAM', 'Connection failed. Invalid Slack token or bot ID?')
+
+
+# globals
+slack_client = SlackClient(os.environ.get('SLACK_BOT_TOKEN'))
+try:
+    uri = os.environ.get('MONGODB_URI')
+    conn = pymongo.MongoClient(uri)
+    log('DB', 'Connection successful.')
+except pymongo.errors.ConnectionFailure as e:
+    log('DB', 'Could not connect to MongoDB: %s' % e)
+
+db = conn[DB_NAME]
+
 
 if __name__ == "__main__":
     main()
