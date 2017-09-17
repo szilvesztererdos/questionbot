@@ -16,6 +16,7 @@ STOP_COMMAND = 'stop'
 NUMBERS = ('first', 'second', 'third')
 DAILY_START_HOURS = 8
 
+MSG_START_GAME = 'Hi @channel! Let\'s start a new round, please check your private messages!'
 MSG_WELCOME = ('Hi! I am questionbot and I invite you to play a little game which furthermore will '
                'help you maintain your programming knowledge, you can get to know your classmates '
                'better and it\'s FUN :)\n'
@@ -342,13 +343,15 @@ def handle_message_event(event):
         print(e)
 
 
-# TODO: send a message to the game channel about game start (and end)
 # TODO: handle players joining the channel after game start
 def start_game(channel_id):
     db['settings'].update_one(
         {'name': 'status'},
         {'$set': {'value': 'game'}}, upsert=True
     )
+
+    send_channel_message(channel_id, MSG_START_GAME)
+
     players = get_player_list(channel_id)
     for player in players:
         # save player status
@@ -374,6 +377,7 @@ def start_game(channel_id):
         )
 
         player_st = db['players'].find_one({'id': player['id']})
+
         # send initial messages to player
         send_im(player['id'], MSG_WELCOME)
         send_im(player['id'], MSG_SETUP)
