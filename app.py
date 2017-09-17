@@ -1,3 +1,5 @@
+# TODO: clear users before starting new channel or filter channel better
+
 import os
 import time
 import re
@@ -416,26 +418,42 @@ def select_for_pairing():
         - nobody can play with themselves
     """
 
-    # filter for status and last_round
-    players = [value
-               for value
-               in list(db['players'].find())
-               if value['status'] == 'ready' and
-               value['last_round'] != date.today()]
-
-    # sort by rounds
-    players.sort(key=lambda p: p['rounds'], reverse=False)
+    # filter for status and last_round, sort by rounds
+    players = list(
+        db['players'].find(
+            {
+                'status': 'ready',
+                'last_round': {
+                    # should be datetime object, because date cannot be encoded as BSON
+                    '$ne': datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+                }
+            }
+        ).sort(
+            [
+                ('rounds', -1)
+            ]
+        )
+    )
 
     # search for a suitable pair
     for player in players:
-        candidates = list(filter(lambda p: p['id'] not in player['opponents'] and
-                          p['id'] != player['id'], players))
+        candidates = list(
+            db['players'].find(
+                {
+                    'status': 'ready',
+                    'last_round': {
+                        # should be datetime object, because date cannot be encoded as BSON
+                        '$ne': datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+                    },
+                    'id': {
+                        '$nin': player['opponents'] + [player['id']]
+                    }
+                }
+            )
+        )
+
         if len(candidates) > 0:
             candidate = candidates[0]
-
-            # update locale list with players already paired
-            candidate['opponents'].append(player['id'])
-            player['opponents'].append(candidate['id'])
 
             # update db with players already paired
             db['players'].update_one(
@@ -608,7 +626,8 @@ def handle_answer(user_id, message):
                 {'id': {'$in': [user_id, opponent_st['id']]}},
                 {
                     '$set': {
-                        'last_round': datetime.today(),
+                        # should be datetime object, because date cannot be encoded as BSON
+                        'last_round': datetime.today().replace(hour=0, minute=0, second=0, microsecond=0),
                         'play_channel': None
                     },
                     '$inc': {
