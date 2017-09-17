@@ -1,5 +1,4 @@
-# TODO: clear users before starting new channel or filter channel better
-
+# TODO: handle game in parallel channels
 import os
 import time
 import re
@@ -349,6 +348,9 @@ def start_game(channel_id):
         {'name': 'status'},
         {'$set': {'value': 'game'}}, upsert=True
     )
+
+    # drop previous players collection
+    db['players'].drop()
 
     send_channel_message(channel_id, MSG_START_GAME)
 
